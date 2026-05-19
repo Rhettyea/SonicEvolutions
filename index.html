@@ -6,228 +6,235 @@
     <style>
         body {
             margin: 0;
-            background: #111;
+            background: #050508;
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
             color: white;
-            font-family: Arial, sans-serif;
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
             overflow: hidden;
             user-select: none;
         }
         canvas {
-            border: 4px solid #fff;
-            box-shadow: 0 0 20px rgba(255,255,255,0.4);
-            background: #87CEEB; /* Green Hill Sky */
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), 0 0 30px rgba(0, 140, 255, 0.2);
+            background: linear-gradient(to bottom, #141e30, #243b55); /* Deep Cinematic Sky */
         }
     </style>
 </head>
 <body>
 
-<canvas id="gameCanvas" width="800" height="600"></canvas>
+<canvas id="gameCanvas" width="900" height="600"></canvas>
 
 <script>
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-// Game Core States
+// Game Core Setup
 let gameState = 'MENU'; 
 let level = 1;
 let score = 0;
 let keys = {};
+let particles = [];
 
-// Character Roster
+// Character Roster with Stats for Battlegrounds UI
 let selectedCharacter = 0;
 const characters = [
-    { name: "Sonic", speed: 6, sprint: 12, punch: 15, color: "#0000FF", superColor: "#FFFF00" },
-    { name: "Shadow", speed: 5, sprint: 11, punch: 25, color: "#333333", superColor: "#FFFF00" },
-    { name: "Knuckles", speed: 4, sprint: 8, punch: 40, color: "#FF0000", superColor: "#FFFF00" }
+    { name: "Sonic", speed: 6, sprint: 13, punch: 18, color: "#0066FF", secondary: "#0033aa", skin: "#FFCC99", stats: { speed: 9, power: 5, defense: 5 } },
+    { name: "Shadow", speed: 5.5, sprint: 12, punch: 26, color: "#222222", secondary: "#D2143A", skin: "#FFCC99", stats: { speed: 8, power: 8, defense: 6 } },
+    { name: "Knuckles", speed: 4.5, sprint: 9, punch: 42, color: "#E50000", secondary: "#FFCC00", skin: "#FFCC99", stats: { speed: 5, power: 10, defense: 9 } }
 ];
 
-// Boss Rotation (Every 5 Levels)
 const BOSS_NAMES = {
-    5: "Dr. Eggman",
-    10: "Rival Knuckles",
-    15: "Ultimate Shadow",
-    20: "Eggman Form 2",
-    25: "Metal Sonic",
-    30: "Final Hazard",
-    35: "Master Core"
+    5: "Dr. Eggman", 10: "Rival Knuckles", 15: "Ultimate Shadow",
+    20: "Eggman Form 2", 25: "Metal Sonic", 30: "Final Hazard", 35: "Master Core"
 };
 
-// Player Setup
-let player = { x: 100, y: 480, width: 40, height: 50 };
+// Player Mechanics
+let player = { x: 150, y: 460, width: 45, height: 65 };
 let playerHp = 100;
-let isSprinting = false;
+let maxHp = 100;
+let isSprinting = true;
 let isSpindashing = false;
 let spindashTimer = 0;
 let isPunching = false;
 let punchTimer = 0;
+let runCycle = 0; // For model leg animations
 
-// Emerald & Super Progression Systems
+// Progression Mechanics
 let emeraldsCollected = 0;
 let isSuperSonic = false;
 let emeraldOrbitalAngle = 0; 
-const EMERALD_COLORS = ["#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF", "#FFFFFF"];
+const EMERALD_COLORS = ["#FF3333", "#33FF33", "#3333FF", "#FFFF33", "#FF33FF", "#33FFFF", "#FFFFFF"];
 
-// Entity Tracking
+// Room Entities
 let enemies = [];
 let boss = null;
 let bossHp = 0;
 let bossMaxHp = 100;
 
-// Key Handlers
+// Input Management
 window.addEventListener("keydown", (e) => {
-    // Prevent spacebar and arrows from scrolling the browser window
-    if(["space", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(e.key.toLowerCase())) {
+    let k = e.key.toLowerCase();
+    if(["space", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) {
         e.preventDefault();
     }
-    keys[e.key.toLowerCase()] = true;
+    keys[k] = true;
     handleKeyDown(e.key);
 });
-
-window.addEventListener("keyup", (e) => {
-    keys[e.key.toLowerCase()] = false;
-});
+window.addEventListener("keyup", (e) => { keys[e.key.toLowerCase()] = false; });
 
 function handleKeyDown(key) {
     if (gameState === 'MENU') {
-        if (key === 'ArrowLeft') {
-            selectedCharacter = (selectedCharacter - 1 + characters.length) % characters.length;
-        } else if (key === 'ArrowRight') {
-            selectedCharacter = (selectedCharacter + 1) % characters.length;
-        } else if (key === 'Enter') {
-            gameState = 'PLAYING';
-            setupLevel();
-        }
+        if (key === 'ArrowLeft') selectedCharacter = (selectedCharacter - 1 + characters.length) % characters.length;
+        if (key === 'ArrowRight') selectedCharacter = (selectedCharacter + 1) % characters.length;
+        if (key === 'Enter') { gameState = 'PLAYING'; setupLevel(); }
     } else if (gameState === 'PLAYING') {
-        if (key === ' ') {
-            isSprinting = !isSprinting; // Toggle walking/sprinting
-        }
-        if (key === 'ArrowDown' && (keys['arrowleft'] || keys['arrowright'])) {
+        if (key === ' ') isSprinting = !isSprinting;
+        if (key === 'ArrowDown' && (keys['arrowleft'] || keys['arrowright'] || keys['a'] || keys['d'])) {
             isSpindashing = true;
-            spindashTimer = 30; 
+            spindashTimer = 25;
+            spawnSparks(player.x + player.width/2, player.y + player.height, "#00FFFF", 12);
         }
-        if (key === 'f' && !isSpindashing) {
+        if (key === 'f' && !isSpindashing && !isPunching) {
             isPunching = true;
-            punchTimer = 15;
+            punchTimer = 12;
         }
     } else if (gameState === 'GAME_OVER' || gameState === 'VICTORY') {
         if (key === 'Enter') {
-            gameState = 'MENU';
-            level = 1;
-            playerHp = 100;
-            score = 0;
-            emeraldsCollected = 0;
-            isSuperSonic = false;
+            gameState = 'MENU'; level = 1; playerHp = 100; score = 0; emeraldsCollected = 0; isSuperSonic = false;
         }
     }
 }
 
 function setupLevel() {
-    enemies = [];
-    boss = null;
-
-    // Trigger Super Form if player holds all 7 Emeralds
-    if (emeraldsCollected >= 7) {
-        isSuperSonic = true;
-    }
+    enemies = []; boss = null;
+    if (emeraldsCollected >= 7) isSuperSonic = true;
 
     if (BOSS_NAMES[level]) {
-        bossMaxHp = level * 60;
-        bossHp = bossMaxHp;
-        boss = { x: 650, y: 450, width: 60, height: 80 };
+        bossMaxHp = level * 70; bossHp = bossMaxHp;
+        boss = { x: 700, y: 425, width: 75, height: 100, direction: -1, hurtTimer: 0 };
     } else {
-        let numSpuniks = 3 + level;
-        for (let i = 0; i < numSpuniks; i++) {
+        let count = 3 + level;
+        for (let i = 0; i < count; i++) {
             enemies.push({
-                x: Math.random() * 450 + 300,
-                y: 500,
-                width: 30,
-                height: 30,
-                speed: Math.random() * 2 + 2,
-                hp: 10 + (level * 2)
+                x: Math.random() * 400 + 450, y: 485, width: 35, height: 40,
+                speed: Math.random() * 1.5 + 2, hp: 10 + (level * 3), maxHp: 10 + (level * 3), hurtTimer: 0
             });
         }
     }
 }
 
+function spawnSparks(x, y, color, count) {
+    for(let i=0; i<count; i++) {
+        particles.push({
+            x: x, y: y,
+            vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 0.5) * 8,
+            alpha: 1, color: color, size: Math.random() * 3 + 2
+        });
+    }
+}
+
 function update() {
+    // Process particles loop
+    for(let i = particles.length - 1; i >= 0; i--) {
+        let p = particles[i];
+        p.x += p.vx; p.y += p.vy; p.alpha -= 0.04;
+        if(p.alpha <= 0) particles.splice(i, 1);
+    }
+
     if (gameState !== 'PLAYING') return;
 
     let char = characters[selectedCharacter];
-    
-    let currentSpeed = isSprinting ? char.sprint : char.speed;
-    if (isSpindashing) currentSpeed *= 1.6;
-    if (isSuperSonic) currentSpeed *= 1.5; 
+    let moving = keys['arrowleft'] || keys['arrowright'] || keys['a'] || keys['d'];
+    if (moving) runCycle += isSprinting ? 0.4 : 0.2;
 
-    // Decay attack timers
+    let currentSpeed = isSprinting ? char.sprint : char.speed;
+    if (isSpindashing) currentSpeed *= 1.7;
+    if (isSuperSonic) currentSpeed *= 1.4;
+
     if (spindashTimer > 0) {
-        spindashTimer--;
-        if (spindashTimer === 0) isSpindashing = false;
+        spindashTimer--; if (spindashTimer === 0) isSpindashing = false;
+        if (moving) pagedTrail(player.x, player.y, isSuperSonic ? "#FFFF00" : char.color);
     }
     if (punchTimer > 0) {
-        punchTimer--;
-        if (punchTimer === 0) isPunching = false;
+        punchTimer--; if (punchTimer === 0) isPunching = false;
     }
 
-    emeraldOrbitalAngle += 0.05;
+    emeraldOrbitalAngle += 0.04;
 
-    // Left/Right Movement Execution
-    if (keys['arrowleft'] && player.x > 20) player.x -= currentSpeed;
-    if (keys['arrowright'] && player.x < canvas.width - 60) player.x += currentSpeed;
+    // Movement Processing
+    let dir = 0;
+    if (keys['arrowleft'] || keys['a']) { player.x -= currentSpeed; dir = -1; }
+    if (keys['arrowright'] || keys['d']) { player.x += currentSpeed; dir = 1; }
+    if (player.x < 15) player.x = 15;
+    if (player.x > canvas.width - 60) player.x = canvas.width - 60;
 
-    // Spunik AI Processing
+    // Aura emit for Super Forms
+    if (isSuperSonic && Math.random() < 0.3) {
+        particles.push({
+            x: player.x + Math.random()*player.width, y: player.y + Math.random()*player.height,
+            vx: (Math.random() - 0.5) * 2, vy: -Math.random() * 3 - 1,
+            alpha: 0.8, color: "#FFFF33", size: Math.random() * 4 + 2
+        });
+    }
+
+    // Spunik Logic loops
     for (let i = enemies.length - 1; i >= 0; i--) {
-        let spunik = enemies[i];
-        if (spunik.x > player.x) spunik.x -= spunik.speed;
-        else spunik.x += spunik.speed;
+        let s = enemies[i];
+        if (s.hurtTimer > 0) s.hurtTimer--;
 
-        if (checkCollision(player, spunik)) {
-            if (isSpindashing || isSuperSonic) { 
-                enemies.splice(i, 1);
-                score += 10;
-            } else if (isPunching) {
-                spunik.hp -= char.punch;
-                if (spunik.hp <= 0) {
-                    enemies.splice(i, 1);
-                    score += 15;
+        if (s.x > player.x + 10) s.x -= s.speed;
+        else if (s.x < player.x - 10) s.x += s.speed;
+
+        if (checkCollision(player, s)) {
+            if (isSpindashing || isSuperSonic) {
+                spawnSparks(s.x + 15, s.y + 20, "#00FFFF", 8);
+                enemies.splice(i, 1); score += 15;
+            } else if (isPunching && ((dir > 0 && s.x > player.x) || (dir < 0 && s.x < player.x) || dir === 0)) {
+                if(s.hurtTimer === 0) {
+                    s.hp -= char.punch; s.hurtTimer = 10;
+                    spawnSparks(s.x + 15, s.y + 20, "#FF3333", 6);
+                    if (s.hp <= 0) { enemies.splice(i, 1); score += 25; }
                 }
-            } else {
-                playerHp -= 0.4;
+            } else if (s.hurtTimer === 0) {
+                playerHp -= 0.6; spawnSparks(player.x + 20, player.y + 30, "#FF0000", 3);
                 if (playerHp <= 0) gameState = 'GAME_OVER';
             }
         }
     }
 
-    // Boss Battle Processing
+    // Boss Core Loop
     if (boss) {
-        if (boss.x > player.x + 50) boss.x -= 2;
-        else if (boss.x < player.x - 50) boss.x += 2;
+        if (boss.hurtTimer > 0) boss.hurtTimer--;
+        if (boss.x > player.x + 60) { boss.x -= 1.8; boss.direction = -1; }
+        else if (boss.x < player.x - 60) { boss.x += 1.8; boss.direction = 1; }
 
         if (checkCollision(player, boss)) {
             if (isSpindashing || isPunching || isSuperSonic) {
-                let dmg = isSuperSonic ? char.punch * 2 : (isPunching ? char.punch : char.punch / 2);
-                bossHp -= (dmg / 10); 
-                
-                if (bossHp <= 0) {
-                    boss = null;
-                    score += 100;
-                    if (emeraldsCollected < 7) emeraldsCollected++;
-                    level++;
-                    setupLevel();
+                if (boss.hurtTimer === 0) {
+                    let damageOutput = isSuperSonic ? char.punch * 2 : char.punch;
+                    bossHp -= damageOutput; boss.hurtTimer = 12;
+                    spawnSparks(boss.x + 30, boss.y + 40, "#FFFF00", 12);
+                    
+                    if (bossHp <= 0) {
+                        boss = null; score += 200;
+                        if (emeraldsCollected < 7) emeraldsCollected++;
+                        level++; setupLevel();
+                    }
                 }
             } else {
-                if (!isSuperSonic) {
-                    playerHp -= 0.8;
+                if (!isSuperSonic && boss.hurtTimer === 0) {
+                    playerHp -= 1.2;
                     if (playerHp <= 0) gameState = 'GAME_OVER';
                 }
             }
         }
     }
 
-    // Progression verification
+    // Clear and Advance Condition
     if (!boss && enemies.length === 0) {
         level++;
         if (level > 35) gameState = 'VICTORY';
@@ -235,146 +242,275 @@ function update() {
     }
 }
 
-function checkCollision(rect1, rect2) {
-    return rect1.x < rect2.x + rect2.width &&
-           rect1.x + rect1.width > rect2.x &&
-           rect1.y < rect2.y + rect2.height &&
-           rect1.y + rect1.height > rect2.y;
+function pagedTrail(x, y, col) {
+    particles.push({
+        x: x + 20, y: y + 30, vx: 0, vy: 0, alpha: 0.4, color: col, size: 20
+    });
+}
+
+function checkCollision(r1, r2) {
+    return r1.x < r2.x + r2.width && r1.x + r1.width > r2.x && r1.y < r2.y + r2.height && r1.y + r1.height > r2.y;
+}
+
+// Advanced Character Renderer (Sonic Battlegrounds/Roblox Style Vector Models)
+function drawPlayer(ctx, x, y, char, flipped) {
+    ctx.save();
+    ctx.translate(x + 22, y + 32);
+    if (flipped) ctx.scale(-1, 1);
+
+    let mainColor = isSuperSonic ? "#FFFF22" : char.color;
+    let accentColor = isSuperSonic ? "#FFAA00" : char.secondary;
+
+    if (isSpindashing) {
+        // High Speed Energy Orb Model
+        let grad = ctx.createRadialGradient(0, 0, 5, 0, 0, 25);
+        grad.addColorStop(0, '#FFFFFF');
+        grad.addColorStop(0.4, mainColor);
+        grad.addColorStop(1, 'transparent');
+        ctx.fillStyle = grad;
+        ctx.beginPath(); ctx.arc(0, 0, 26, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+        return;
+    }
+
+    // 1. Dynamic Legs Running Cycles
+    let legSwing = Math.sin(runCycle) * 15;
+    ctx.strokeStyle = mainColor; ctx.lineWidth = 7; ctx.lineCap = "round";
+    
+    // Leg 1
+    ctx.beginPath(); ctx.moveTo(-5, 10); ctx.lineTo(-10 + legSwing, 28); ctx.stroke();
+    // Leg 2
+    ctx.beginPath(); ctx.moveTo(5, 10); ctx.lineTo(10 - legSwing, 28); ctx.stroke();
+
+    // Shoes (Battlegrounds High-tops Style)
+    ctx.fillStyle = "#E50000";
+    ctx.fillRect(-16 + legSwing, 24, 14, 7);
+    ctx.fillRect(4 - legSwing, 24, 14, 7);
+    ctx.fillStyle = "#FFFFFF"; // Shoe Stripes
+    ctx.fillRect(-12 + legSwing, 24, 4, 7);
+    ctx.fillRect(8 - legSwing, 24, 4, 7);
+
+    // 2. Torso Block Customization
+    ctx.fillStyle = mainColor;
+    ctx.fillRect(-10, -12, 20, 24);
+    // Belly patch
+    ctx.fillStyle = char.skin;
+    ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI*2); ctx.fill();
+
+    // 3. Dynamic Punching Arms
+    ctx.strokeStyle = mainColor; ctx.lineWidth = 6;
+    if (isPunching) {
+        ctx.beginPath(); ctx.moveTo(8, -5); ctx.lineTo(28, -5); ctx.stroke(); // Punch extended
+        ctx.fillStyle = "#FFFFFF"; // Glove
+        ctx.beginPath(); ctx.arc(28, -5, 6, 0, Math.PI*2); ctx.fill();
+    } else {
+        let armSwing = Math.cos(runCycle) * 8;
+        ctx.beginPath(); ctx.moveTo(8, -5); ctx.lineTo(14, 5 + armSwing); ctx.stroke();
+        ctx.fillStyle = "#FFFFFF";
+        ctx.beginPath(); ctx.arc(14, 5 + armSwing, 5, 0, Math.PI*2); ctx.fill();
+    }
+
+    // 4. Head, Quills, and Ears (Spiked profile styling)
+    ctx.fillStyle = accentColor; // Quill Backdrop Layer
+    ctx.beginPath();
+    ctx.moveTo(-8, -25); ctx.lineTo(-24, -20); ctx.lineTo(-10, -14);
+    ctx.lineTo(-26, -10); ctx.lineTo(-8, -6);
+    ctx.fill();
+
+    ctx.fillStyle = mainColor; // Main Skull structure
+    ctx.beginPath(); ctx.arc(0, -20, 11, 0, Math.PI * 2); ctx.fill();
+
+    // Muzzle Face Plate
+    ctx.fillStyle = char.skin;
+    ctx.beginPath(); ctx.arc(4, -17, 6, 0, Math.PI * 2); ctx.fill();
+    
+    // Eyes (Angry battle expression style)
+    ctx.fillStyle = "#FFFFFF";
+    ctx.fillRect(2, -24, 6, 5);
+    ctx.fillStyle = isSuperSonic ? "#FF3333" : (char.name === "Shadow" ? "#FF0000" : "#009900");
+    ctx.fillRect(5, -23, 3, 4);
+
+    ctx.restore();
 }
 
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Render floor profile
-    ctx.fillStyle = "#228B22";
-    ctx.fillRect(0, 530, canvas.width, 70);
+    // Background Arena Decoration (Grid lines & Green Hill Gradient Profile)
+    let groundY = 520;
+    let skyGrad = ctx.createLinearGradient(0, 0, 0, groundY);
+    skyGrad.addColorStop(0, '#0d1b2a'); skyGrad.addColorStop(0.6, '#1b263b'); skyGrad.addColorStop(1, '#415a77');
+    ctx.fillStyle = skyGrad; ctx.fillRect(0, 0, canvas.width, groundY);
+
+    // Grid Floor Perspective Lines
+    ctx.fillStyle = "#1e293b"; ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+    ctx.strokeStyle = "#334155"; ctx.lineWidth = 2;
+    for (let i = 0; i < canvas.width; i += 50) {
+        ctx.beginPath(); ctx.moveTo(i, groundY); ctx.lineTo(i + (i - canvas.width/2)*0.2, canvas.height); ctx.stroke();
+    }
+    ctx.strokeStyle = "#0088ff"; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(0, groundY); ctx.lineTo(canvas.width, groundY); ctx.stroke(); // Neon Baseline Edge
+
+    // Draw active particle systems
+    particles.forEach(p => {
+        ctx.save(); ctx.globalAlpha = p.alpha; ctx.fillStyle = p.color;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI*2); ctx.fill(); ctx.restore();
+    });
 
     if (gameState === 'MENU') {
-        ctx.fillStyle = "orange";
-        ctx.font = "bold 46px Arial";
+        // --- GIANT REVAMPED MAIN MENU SYSTEM ---
+        ctx.fillStyle = "rgba(10, 15, 30, 0.7)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Logo Header Decoration
         ctx.textAlign = "center";
-        ctx.fillText("SONICEVOLUTIONS", canvas.width / 2, 150);
+        ctx.fillStyle = "#0088ff"; ctx.font = "bold 56px 'Impact', sans-serif";
+        ctx.fillText("SONICEVOLUTIONS", canvas.width / 2 + 2, 112);
+        ctx.fillStyle = "#FFFFFF"; 
+        ctx.fillText("SONICEVOLUTIONS", canvas.width / 2, 110);
 
-        ctx.fillStyle = "white";
-        ctx.font = "24px Arial";
-        ctx.fillText("Select Your Character:", canvas.width / 2, 240);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.1)"; ctx.font = "italic bold 16px Arial";
+        ctx.fillText("BATTLEGROUNDS EDITION", canvas.width / 2, 140);
 
-        let char = characters[selectedCharacter];
-        ctx.fillStyle = char.color;
-        ctx.fillRect(canvas.width / 2 - 40, 280, 80, 90);
+        // Character Showcase Windows Layout
+        let activeChar = characters[selectedCharacter];
+        
+        // Stats Card Frame Box
+        ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
+        ctx.strokeStyle = "#0088ff"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.roundRect(100, 180, 320, 300, 12); ctx.fill(); ctx.stroke();
 
-        ctx.fillStyle = "white";
-        ctx.font = "bold 30px Arial";
-        ctx.fillText(char.name, canvas.width / 2, 410);
+        ctx.fillStyle = "#FFFFFF"; ctx.font = "bold 28px Arial"; ctx.textAlign = "left";
+        ctx.fillText(activeChar.name.toUpperCase(), 130, 230);
 
-        ctx.fillStyle = "#FFFF00";
-        ctx.font = "20px Arial";
-        ctx.fillText("Use LEFT / RIGHT arrows to select. Press ENTER to start.", canvas.width / 2, 480);
+        // Draw Live Stats Indicators Bars
+        let labels = ["SPEED", "POWER", "DEFENSE"];
+        let vals = [activeChar.stats.speed, activeChar.stats.power, activeChar.stats.defense];
+        for(let i=0; i<3; i++) {
+            ctx.fillStyle = "#94a3b8"; ctx.font = "bold 12px Arial";
+            ctx.fillText(labels[i], 130, 275 + (i*55));
+            // Bar background slot
+            ctx.fillStyle = "#1e293b"; ctx.fillRect(130, 285 + (i*55), 250, 10);
+            // Filled attribute value
+            ctx.fillStyle = activeChar.color; ctx.fillRect(130, 285 + (i*55), vals[i] * 25, 10);
+        }
+
+        // Live 3D-like Character Demonstration Stage Window
+        ctx.fillStyle = "rgba(15, 23, 42, 0.85)"; ctx.strokeStyle = "rgba(255,255,255,0.1)";
+        ctx.beginPath(); ctx.roundRect(470, 180, 330, 300, 12); ctx.fill(); ctx.stroke();
+        
+        // Draw character inside preview frame
+        drawPlayer(ctx, 610, 280, activeChar, false);
+
+        // Footer Instructions Text Blocks
+        ctx.textAlign = "center"; ctx.fillStyle = "#64748b"; ctx.font = "14px Arial";
+        ctx.fillText("◄ USE ARROW KEYS TO BROWSE ROSTER ►", canvas.width/2, 520);
+        ctx.fillStyle = "#00ffcc"; ctx.font = "bold 18px Arial";
+        ctx.fillText("PRESS ENTER TO ENTER ARENA", canvas.width/2, 555);
 
     } else if (gameState === 'PLAYING') {
         let char = characters[selectedCharacter];
+        let movingLeft = keys['arrowleft'] || keys['a'];
 
-        // HUD elements
-        ctx.fillStyle = "white";
-        ctx.font = "20px Arial";
-        ctx.textAlign = "left";
-        ctx.fillText(`CHARACTER: ${char.name.toUpperCase()}`, 20, 30);
-        ctx.fillText(`LEVEL: ${level}`, 20, 60);
-        ctx.fillText(`SCORE: ${score}`, 20, 90);
+        // --- HUD MANAGEMENT INTERFACE REVAMP ---
+        ctx.fillStyle = "rgba(15, 23, 42, 0.75)"; // Sleek Top HUD ribbon backdrop
+        ctx.beginPath(); ctx.roundRect(20, 20, 320, 140, 8); ctx.fill();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.08)"; ctx.stroke();
+
+        ctx.fillStyle = "#FFFFFF"; ctx.font = "bold 16px Arial"; ctx.textAlign = "left";
+        ctx.fillText(`${char.name.toUpperCase()}`, 40, 48);
+        ctx.fillStyle = "#38bdf8"; ctx.font = "13px Arial";
+        ctx.fillText(`STAGE LEVEL: ${level}`, 40, 72);
+        ctx.fillStyle = "#fbbf24";
+        ctx.fillText(`SCORE COUNTER: ${score}`, 40, 94);
+
+        // Health Gauge Bar Component Rendering
+        ctx.fillStyle = "#1e293b"; ctx.fillRect(40, 114, 250, 12);
+        let hpPct = Math.max(0, playerHp / maxHp);
+        ctx.fillStyle = hpPct < 0.35 ? "#ef4444" : "#10b981";
+        ctx.fillRect(40, 114, 250 * hpPct, 12);
+
+        // Sidebar Mechanics Stats Indicators
+        ctx.fillStyle = "rgba(15, 23, 42, 0.75)";
+        ctx.beginPath(); ctx.roundRect(680, 20, 200, 85, 8); ctx.fill(); ctx.stroke();
         
-        ctx.fillStyle = playerHp < 30 ? "red" : "lime";
-        ctx.fillText(`HP: ${Math.max(0, Math.floor(playerHp))}`, 20, 120);
+        ctx.fillStyle = "#22d3ee"; ctx.font = "bold 11px Arial";
+        ctx.fillText(`MOTION CONFIG: ${isSprinting ? 'SPRINT DRIVEN' : 'WALK MANIFEST'}`, 700, 48);
+        ctx.fillStyle = "#ffffff";
+        ctx.fillText(`EMERALDS OBTAINED: ${emeraldsCollected} / 7`, 700, 76);
 
-        ctx.fillStyle = "cyan";
-        ctx.fillText(`MODE: ${isSprinting ? 'SPRINTING' : 'WALKING'} (SPACE)`, 20, 150);
-        ctx.fillStyle = "white";
-        ctx.fillText(`EMERALDS: ${emeraldsCollected} / 7`, 20, 180);
+        // Execute Player Unit Graphics Rendering
+        drawPlayer(ctx, player.x, player.y, char, movingLeft);
 
-        // Render Player Avatar (Color transformations applied)
-        ctx.fillStyle = isSuperSonic ? char.superColor : char.color;
-
-        if (isSpindashing) {
-            ctx.beginPath();
-            ctx.arc(player.x + 20, player.y + 25, 22, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.closePath();
-        } else {
-            ctx.fillRect(player.x, player.y, player.width, player.height);
-            if (isPunching) {
-                ctx.fillStyle = "white";
-                ctx.fillRect(player.x + 40, player.y + 15, 20, 10);
-            }
-        }
-
-        // Project Floating Chaos Emerald Cluster Orbit
+        // Floating Chaos Emerald Ring Orbital Track Rendering
         for (let i = 0; i < emeraldsCollected; i++) {
             let angle = emeraldOrbitalAngle + (i * (Math.PI * 2 / 7));
-            let radius = 45; 
+            let radius = 50; 
             let ex = player.x + player.width / 2 + Math.cos(angle) * radius;
             let ey = player.y + player.height / 2 + Math.sin(angle) * radius;
 
             ctx.fillStyle = EMERALD_COLORS[i];
+            ctx.shadowBlur = 10; ctx.shadowColor = EMERALD_COLORS[i]; // Glow effect
             ctx.beginPath();
-            ctx.moveTo(ex, ey - 8);
-            ctx.lineTo(ex + 6, ey);
-            ctx.lineTo(ex, ey + 8);
-            ctx.lineTo(ex - 6, ey);
+            ctx.moveTo(ex, ey - 7); ctx.lineTo(ex + 5, ey - 2); ctx.lineTo(ex + 3, ey + 5);
+            ctx.lineTo(ex - 3, ey + 5); ctx.lineTo(ex - 5, ey - 2);
             ctx.fill();
-            ctx.closePath();
+            ctx.shadowBlur = 0; // Reset canvas shadow profiles
         }
 
-        // Active Super Sonic Aura Fields
-        if (isSuperSonic) {
-            ctx.strokeStyle = "rgba(255, 255, 0, 0.4)";
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.arc(player.x + 20, player.y + 25, 30 + Math.sin(emeraldOrbitalAngle*2)*5, 0, Math.PI*2);
-            ctx.stroke();
-        }
-
-        // Render enemy targets
-        ctx.fillStyle = "#800080"; 
-        enemies.forEach(spunik => {
-            ctx.fillRect(spunik.x, spunik.y, spunik.width, spunik.height);
+        // Draw Spuniks (Upgraded Battlegrounds Enemy Drone Appearance)
+        enemies.forEach(s => {
+            ctx.save();
+            if(s.hurtTimer > 0) ctx.filter = "brightness(2) sepia(1) hue-rotate(-50deg)"; // Damage Flash Effect
+            
+            // Spunik Mechanical core
+            ctx.fillStyle = "#581c87"; ctx.strokeStyle = "#a855f7"; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.roundRect(s.x, s.y, s.width, s.height, 6); ctx.fill(); ctx.stroke();
+            
+            // Tech eye visor
+            ctx.fillStyle = "#ef4444"; ctx.fillRect(s.x + 4, s.y + 10, s.width - 8, 6);
+            ctx.restore();
         });
 
-        // Boss layout render
+        // Boss Rendering Engine Layout
         if (boss) {
-            ctx.fillStyle = "red";
-            ctx.font = "bold 24px Arial";
-            ctx.textAlign = "center";
-            ctx.fillText(`BOSS: ${BOSS_NAMES[level]}`, canvas.width / 2, 40);
-
-            ctx.fillStyle = "#440000";
-            ctx.fillRect(canvas.width / 2 - 150, 60, 300, 15);
+            ctx.save();
+            if(boss.hurtTimer > 0) ctx.filter = "brightness(2.5)";
             
-            ctx.fillStyle = "red";
-            ctx.fillRect(canvas.width / 2 - 150, 60, 300 * (bossHp / bossMaxHp), 15);
+            // Header Global Health Card Frame for Boss
+            ctx.fillStyle = "rgba(10, 10, 15, 0.8)";
+            ctx.beginPath(); ctx.roundRect(canvas.width/2 - 200, 25, 400, 50, 6); ctx.fill();
+            
+            ctx.fillStyle = "#f43f5e"; ctx.font = "bold 13px Arial"; ctx.textAlign = "center";
+            ctx.fillText(`TARGET: ${BOSS_NAMES[level].toUpperCase()}`, canvas.width/2, 43);
+            
+            ctx.fillStyle = "#1e293b"; ctx.fillRect(canvas.width/2 - 170, 52, 340, 10);
+            ctx.fillStyle = "#f43f5e"; ctx.fillRect(canvas.width/2 - 170, 52, 340 * (bossHp / bossMaxHp), 10);
 
-            ctx.fillStyle = "#A52A2A";
-            ctx.fillRect(boss.x, boss.y, boss.width, boss.height);
+            // Draw Boss Figures Base Chassis
+            ctx.translate(boss.x + boss.width/2, boss.y + boss.height/2);
+            if(boss.direction > 0) ctx.scale(-1, 1);
+            
+            ctx.fillStyle = "#334155"; ctx.fillRect(-boss.width/2, -boss.height/2, boss.width, boss.height);
+            ctx.fillStyle = "#e11d48"; ctx.fillRect(-boss.width/2 + 5, -boss.height/2 + 10, boss.width - 10, 30); // Metallic armor plating
+            
+            ctx.restore();
         }
 
     } else if (gameState === 'GAME_OVER') {
-        ctx.fillStyle = "red";
-        ctx.font = "bold 60px Arial";
-        ctx.textAlign = "center";
-        ctx.fillText("GAME OVER", canvas.width / 2, 260);
-
-        ctx.fillStyle = "white";
-        ctx.font = "24px Arial";
-        ctx.fillText("Press ENTER to return to Menu", canvas.width / 2, 340);
+        ctx.fillStyle = "rgba(5, 5, 10, 0.85)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.textAlign = "center"; ctx.fillStyle = "#f43f5e"; ctx.font = "bold 62px Arial";
+        ctx.fillText("MISSION FAILURE", canvas.width / 2, 270);
+        ctx.fillStyle = "#ffffff"; ctx.font = "18px Arial";
+        ctx.fillText("PRESS ENTER TO RETRY CHALLENGE", canvas.width / 2, 350);
 
     } else if (gameState === 'VICTORY') {
-        ctx.fillStyle = "yellow";
-        ctx.font = "bold 55px Arial";
-        ctx.textAlign = "center";
-        ctx.fillText("SUPER SONIC VICTORY!", canvas.width / 2, 250);
-
-        ctx.fillStyle = "white";
-        ctx.font = "30px Arial";
-        ctx.fillText(`Final Score: ${score}`, canvas.width / 2, 320);
-        ctx.fillText("Press ENTER to play again", canvas.width / 2, 390);
+        ctx.fillStyle = "rgba(5, 15, 10, 0.9)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.textAlign = "center"; ctx.fillStyle = "#fbbf24"; ctx.font = "bold 54px Arial";
+        ctx.fillText("SUPER SONIC CHAMPION", canvas.width / 2, 250);
+        ctx.fillStyle = "#ffffff"; ctx.font = "22px Arial";
+        ctx.fillText(`ACQUIRED RUN TALLY SCORE: ${score}`, canvas.width / 2, 330);
+        ctx.fillText("PRESS ENTER TO RESTART SYSTEM", canvas.width / 2, 410);
     }
 }
 
