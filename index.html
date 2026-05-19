@@ -2,403 +2,6 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>JJS 2D Showcase - Black Flash Edition</title>
-    <style>
-        body {
-            margin: 0;
-            background-color: #111;
-            color: #fff;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            overflow: hidden;
-        }
-        #ui-layer {
-            position: absolute;
-            top: 20px;
-            display: flex;
-            gap: 50px;
-            pointer-events: none;
-        }
-        .hud {
-            background: rgba(0,0,0,0.6);
-            padding: 10px 20px;
-            border-radius: 5px;
-            border: 1px solid #333;
-        }
-        .bar {
-            width: 200px;
-            height: 15px;
-            background: #222;
-            border: 1px solid #555;
-            margin-top: 5px;
-        }
-        .health-fill { width: 100%; height: 100%; background: #e74c3c; transition: width 0.1s; }
-        .awaken-fill { width: 0%; height: 100%; background: #9b59b6; transition: width 0.1s; }
-        canvas {
-            border: 2px solid #444;
-            background-color: #1a1a1a;
-            box-shadow: 0 0 20px rgba(0,0,0,0.8);
-        }
-        #controls-hint {
-            margin-top: 15px;
-            color: #aaa;
-            text-align: center;
-            font-size: 14px;
-        }
-        .flash-text {
-            color: #ff0055;
-            font-weight: bold;
-            text-shadow: 0 0 10px #000;
-        }
-    </style>
-</head>
-<body>
-
-    <div id="ui-layer">
-        <div class="hud" id="p1-hud">
-            <div><strong>VESSEL (Yuji)</strong> <span id="p1-state">IDLE</span></div>
-            <div class="bar"><div id="p1-health" class="health-fill"></div></div>
-            <div class="bar"><div id="p1-awaken" class="awaken-fill"></div></div>
-        </div>
-        <div class="hud" id="p2-hud">
-            <div><strong>HONORED ONE (Gojo Dummy)</strong></div>
-            <div class="bar"><div id="p2-health" class="health-fill"></div></div>
-        </div>
-    </div>
-
-    <canvas id="gameCanvas" width="900" height="450"></canvas>
-
-    <div id="controls-hint">
-        <strong>[1]</strong> M1 Basic Attack Combo | 
-        <strong>[3]</strong> Divergent Fist <span class="flash-text">(Press [3] AGAIN right when arm pulls all the way back for BLACK FLASH!)</span><br>
-        <strong>[G]</strong> Awakening (100% Spark) | 
-        <strong>[R]</strong> Reset Dummy Position
-    </div>
-
-<script>
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-
-// Game State Constants
-const GRAVITY = 0.6;
-const FLOOR_Y = 380;
-
-class Character {
-    constructor(x, y, color, isDummy = false) {
-        this.x = x;
-        this.y = y;
-        this.vx = 0;
-        this.vy = 0;
-        this.width = 40;
-        this.height = 70;
-        this.color = color;
-        this.isDummy = isDummy;
-        
-        // Stats
-        this.maxHealth = 100;
-        this.health = 100;
-        this.awakening = 0;
-        this.isAwakened = false;
-        
-        // Combat Combat States
-        this.state = 'idle'; // idle, attacking, windup, hitstun, knockedout
-        this.direction = isDummy ? -1 : 1; // 1 = right, -1 = left
-        this.comboStep = 0;
-        this.lastM1Time = 0;
-        this.stateTimer = 0;
-        
-        // Move-specific windows
-        this.blackFlashWindowActive = false;
-        this.hasBlackFlashed = false;
-    }
-
-    update() {
-        // Apply Gravity
-        if (this.y + this.height < FLOOR_Y) {
-            this.vy += GRAVITY;
-        } else {
-            this.vy = 0;
-            this.y = FLOOR_Y - this.height;
-            if (this.state === 'hitstun' && Math.abs(this.vx) < 1) {
-                this.state = 'idle';
-            }
-        }
-
-        // Apply Friction/Drag
-        this.vx *= 0.85;
-        this.x += this.vx;
-        this.y += this.vy;
-
-        // Keep inside canvas bounds
-        if (this.x < 0) this.x = 0;
-        if (this.x > canvas.width - this.width) this.x = canvas.width - this.width;
-
-        // Process State timers
-        if (this.stateTimer > 0) {
-            this.stateTimer--;
-            if (this.stateTimer === 0) {
-                if (this.state === 'windup' && this.pendingMove) {
-                    this.executeMove(this.pendingMove);
-                } else if (this.state !== 'knockedout') {
-                    this.state = 'idle';
-                    this.blackFlashWindowActive = false;
-                }
-            }
-        }
-    }
-
-    takeDamage(amount, knockbackX, knockbackY) {
-        this.health = Math.max(0, this.health - amount);
-        this.state = 'hitstun';
-        this.stateTimer = 30; // 30 frames of hitstun
-        this.vx = knockbackX;
-        this.vy = knockbackY;
-        
-        // Gain awakening when taking damage (JJS passive mechanic)
-        if (!this.isDummy) {
-            this.awakening = Math.min(100, this.awakening + amount * 0.5);
-        }
-    }
-
-    performM1() {
-        if (this.state !== 'idle' && this.state !== 'attacking') return;
-
-        let now = Date.now();
-        if (now - this.lastM1Time > 1000) this.comboStep = 0; // Reset combo if delayed
-
-        this.state = 'attacking';
-        this.stateTimer = 15;
-        this.lastM1Time = now;
-        
-        // Setup hitbox calculations based on combo step
-        let damage = 5;
-        let kX = this.direction * 5;
-        let kY = -2;
-        
-        if (this.comboStep === 3) { // 4th hit finisher
-            damage = 12;
-            kX = this.direction * 18;
-            kY = -6;
-            this.comboStep = 0;
-            createImpactParticle((this.x + this.width/2) + (this.direction * 40), this.y + 20, '#ffcc00', 15);
-        } else {
-            this.comboStep++;
-            createImpactParticle((this.x + this.width/2) + (this.direction * 30), this.y + 30, '#fff', 5);
-        }
-
-        this.checkHitbox(45, 50, damage, kX, kY);
-    }
-
-    initiateDivergentFist() {
-        if (this.state !== 'idle') {
-            // IF ALREADY IN WINDUP: Check for Black Flash Exact Input frame rules
-            if (this.state === 'windup' && this.blackFlashWindowActive && !this.hasBlackFlashed) {
-                this.triggerBlackFlashSuccess();
-            }
-            return;
-        }
-
-        this.state = 'windup';
-        this.stateTimer = 25; // 25 frames window setup
-        this.pendingMove = 'divergent_fist';
-        this.hasBlackFlashed = false;
-
-        // JJS Mechanical frame perfect rule: Black Flash window triggers near the absolute peak tail of the windup
-        setTimeout(() => {
-            if (this.state === 'windup' && this.pendingMove === 'divergent_fist') {
-                this.blackFlashWindowActive = true;
-                // Visual cue: Spark indicator lines up with game UI
-                createImpactParticle(this.x + (this.direction * 10) + this.width/2, this.y + 20, 'rgba(255,255,255,0.8)', 8);
-            }
-        }, 250); // roughly 15 frames deep into execution
-    }
-
-    triggerBlackFlashSuccess() {
-        this.hasBlackFlashed = true;
-        this.pendingMove = 'black_flash';
-        // Force fast execution override
-        this.stateTimer = 2; 
-    }
-
-    executeMove(moveType) {
-        this.state = 'attacking';
-        this.stateTimer = 20;
-
-        if (moveType === 'divergent_fist') {
-            // Normal execution
-            this.checkHitbox(60, 60, 14, this.direction * 10, -3);
-            createImpactParticle(this.x + (this.direction * 40), this.y + 20, '#00bcff', 12);
-            // Double impact delays
-            setTimeout(() => {
-                this.checkHitbox(65, 60, 6, this.direction * 14, -2);
-            }, 150);
-        } 
-        else if (moveType === 'black_flash') {
-            // Black Flash Spatial Mechanics: Critical Amp 2.5 Multiplier, Crimson Particle explosions
-            let targetHit = this.checkHitbox(80, 70, 35, this.direction * 32, -10);
-            
-            // Screen Shake trigger dynamic
-            screenShake = 20;
-            
-            // Generate distinct Black lightning particles
-            for(let i=0; i<30; i++) {
-                particles.push(new Particle(
-                    this.x + (this.direction * 50) + (Math.random()*40 - 20),
-                    this.y + 20 + (Math.random()*40 - 20),
-                    Math.random() * 6 - 3 + (this.direction * 8),
-                    Math.random() * 8 - 4,
-                    `rgb(${Math.random() > 0.3 ? '255,0,50' : '0,0,0'})`,
-                    Math.random() * 25 + 15
-                ));
-            }
-            
-            if (this.awakening < 100) {
-                this.awakening = Math.min(100, this.awakening + 35); // Landing BF massive boost to zone bar
-            }
-        }
-        this.blackFlashWindowActive = false;
-    }
-
-    checkHitbox(w, h, dmg, kx, ky) {
-        let hx = this.direction === 1 ? this.x + this.width : this.x - w;
-        let hy = this.y + 10;
-
-        // Collision Check with Opponent
-        let opponent = this.isDummy ? player : dummy;
-        if (hx < opponent.x + opponent.width &&
-            hx + w > opponent.x &&
-            hy < opponent.y + opponent.height &&
-            hy + h > opponent.y) {
-                opponent.takeDamage(dmg, kx, ky);
-                return true;
-        }
-        return false;
-    }
-
-    draw() {
-        ctx.fillStyle = this.color;
-        
-        // Render base character frame layout
-        if (this.state === 'hitstun') ctx.fillStyle = '#7f8c8d';
-        ctx.fillRect(this.x, this.y, this.width, this.height);
-
-        // Visual State indicators for testing positioning mechanics
-        ctx.fillStyle = '#fff';
-        if (this.direction === 1) {
-            ctx.fillRect(this.x + this.width - 8, this.y + 15, 8, 8); // Facing Eye indicator
-        } else {
-            ctx.fillRect(this.x, this.y + 15, 8, 8);
-        }
-
-        // Active State Render overlays
-        if (this.blackFlashWindowActive) {
-            ctx.strokeStyle = '#ff003c';
-            ctx.lineWidth = 3;
-            ctx.strokeRect(this.x - 5, this.y - 5, this.width + 10, this.height + 10);
-        }
-    }
-}
-
-// Particle Engine Array Structs
-class Particle {
-    constructor(x, y, vx, vy, color, life) {
-        this.x = x;
-        this.y = y;
-        this.vx = vx;
-        this.vy = vy;
-        this.color = color;
-        this.maxLife = life;
-        this.life = life;
-    }
-    update() {
-        this.x += this.vx;
-        this.y += this.vy;
-        this.life--;
-    }
-    draw() {
-        ctx.fillStyle = this.color;
-        let alpha = this.life / this.maxLife;
-        ctx.globalAlpha = alpha;
-        ctx.fillRect(this.x, this.y, Math.max(2, 6 * alpha), Math.max(2, 6 * alpha));
-        ctx.globalAlpha = 1.0;
-    }
-}
-
-// Initialize Instantiations
-const player = new Character(150, FLOOR_Y - 70, '#e67e22');
-const dummy = new Character(650, FLOOR_Y - 70, '#2c3e50', true);
-let particles = [];
-let screenShake = 0;
-
-function createImpactParticle(x, y, color, count) {
-    for (let i = 0; i < count; i++) {
-        particles.push(new Particle(
-            x, y, 
-            (Math.random() - 0.5) * 10, 
-            (Math.random() - 0.5) * 10, 
-            color, 
-            Math.random() * 20 + 10
-        ));
-    }
-}
-
-// Global Key Listeners Map Binding Framework
-window.addEventListener('keydown', (e) => {
-    if (player.state === 'hitstun') return;
-    
-    switch(e.key.toLowerCase()) {
-        case '1':
-            player.performM1();
-            break;
-        case '3':
-            player.initiateDivergentFist();
-            break;
-        case 'g':
-            if (player.awakening >= 100) {
-                player.isAwakened = true;
-                player.color = '#8e44ad'; // Purple variant palette shift
-                createImpactParticle(player.x + 20, player.y + 35, '#9b59b6', 40);
-                screenShake = 15;
-            }
-            break;
-        case 'r': // Debug repositioning utilities map
-            dummy.x = 650;
-            dummy.y = FLOOR_Y - 70;
-            dummy.health = 100;
-            dummy.state = 'idle';
-            break;
-    }
-});
-
-// Engine Frame Cycle System Loop
-function gameLoop() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Apply Cinematic Screen Shake Dynamics Matrix
-    ctx.save();
-    if (screenShake > 0) {
-        let dx = (Math.random() - 0.5) * screenShake;
-        let dy = (Math.random() - 0.5) * screenShake;
-        ctx.translate(dx, dy);
-        screenShake *= 0.9;
-        if (screenShake < 0.5) screenShake = 0;
-    }
-
-    // Render Stage Environment Floor Layout
-    ctx.fillStyle = '#2c3e50';
-    ctx.fillRect(0, FLOOR_Y, canvas.width, canvas.height - FLOOR_Y);
-    ctx.fillStyle = '#27ae60';
-    ctx.fillRect(0, FLOOR_Y, canvas.width, 5); // Green platform trim bounds
-
-   <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
     <title>SonicEvolutions</title>
     <style>
         body {
@@ -411,11 +14,12 @@ function gameLoop() {
             color: white;
             font-family: Arial, sans-serif;
             overflow: hidden;
+            user-select: none;
         }
         canvas {
             border: 4px solid #fff;
-            box-shadow: 0 0 20px rgba(255,255,255,0.2);
-            background: #87CEEB; /* Green Hill Zone Blue Sky */
+            box-shadow: 0 0 20px rgba(255,255,255,0.4);
+            background: #87CEEB; /* Green Hill Sky */
         }
     </style>
 </head>
@@ -427,13 +31,13 @@ function gameLoop() {
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
-// Game State Control
-let gameState = 'MENU'; // MENU, PLAYING, GAME_OVER, VICTORY
+// Game Core States
+let gameState = 'MENU'; 
 let level = 1;
 let score = 0;
 let keys = {};
 
-// Characters Setup
+// Character Roster
 let selectedCharacter = 0;
 const characters = [
     { name: "Sonic", speed: 6, sprint: 12, punch: 15, color: "#0000FF", superColor: "#FFFF00" },
@@ -441,7 +45,7 @@ const characters = [
     { name: "Knuckles", speed: 4, sprint: 8, punch: 40, color: "#FF0000", superColor: "#FFFF00" }
 ];
 
-// Boss Setup
+// Boss Rotation (Every 5 Levels)
 const BOSS_NAMES = {
     5: "Dr. Eggman",
     10: "Rival Knuckles",
@@ -452,7 +56,7 @@ const BOSS_NAMES = {
     35: "Master Core"
 };
 
-// Player Variables
+// Player Setup
 let player = { x: 100, y: 480, width: 40, height: 50 };
 let playerHp = 100;
 let isSprinting = false;
@@ -461,23 +65,28 @@ let spindashTimer = 0;
 let isPunching = false;
 let punchTimer = 0;
 
-// Chaos Emerald / Super Sonic Mechanics
+// Emerald & Super Progression Systems
 let emeraldsCollected = 0;
 let isSuperSonic = false;
-let emeraldOrbitalAngle = 0; // For making emeralds float around player
+let emeraldOrbitalAngle = 0; 
 const EMERALD_COLORS = ["#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#FF00FF", "#00FFFF", "#FFFFFF"];
 
-// Game Entities
+// Entity Tracking
 let enemies = [];
 let boss = null;
 let bossHp = 0;
 let bossMaxHp = 100;
 
-// Listen for Key Presses
+// Key Handlers
 window.addEventListener("keydown", (e) => {
+    // Prevent spacebar and arrows from scrolling the browser window
+    if(["space", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+    }
     keys[e.key.toLowerCase()] = true;
     handleKeyDown(e.key);
 });
+
 window.addEventListener("keyup", (e) => {
     keys[e.key.toLowerCase()] = false;
 });
@@ -493,23 +102,19 @@ function handleKeyDown(key) {
             setupLevel();
         }
     } else if (gameState === 'PLAYING') {
-        // Spacebar toggles sprinting/walking
         if (key === ' ') {
-            isSprinting = !isSprinting;
+            isSprinting = !isSprinting; // Toggle walking/sprinting
         }
-        // Down arrow while moving triggers Spin Dash
         if (key === 'ArrowDown' && (keys['arrowleft'] || keys['arrowright'])) {
             isSpindashing = true;
-            spindashTimer = 30; // 30 frames duration
+            spindashTimer = 30; 
         }
-        // F key punches
         if (key === 'f' && !isSpindashing) {
             isPunching = true;
             punchTimer = 15;
         }
     } else if (gameState === 'GAME_OVER' || gameState === 'VICTORY') {
         if (key === 'Enter') {
-            // Reset game completely
             gameState = 'MENU';
             level = 1;
             playerHp = 100;
@@ -524,7 +129,7 @@ function setupLevel() {
     enemies = [];
     boss = null;
 
-    // Trigger Super Sonic automatically when 7 emeralds are held
+    // Trigger Super Form if player holds all 7 Emeralds
     if (emeraldsCollected >= 7) {
         isSuperSonic = true;
     }
@@ -537,7 +142,7 @@ function setupLevel() {
         let numSpuniks = 3 + level;
         for (let i = 0; i < numSpuniks; i++) {
             enemies.push({
-                x: Math.random() * (750 - 300) + 300,
+                x: Math.random() * 450 + 300,
                 y: 500,
                 width: 30,
                 height: 30,
@@ -553,12 +158,11 @@ function update() {
 
     let char = characters[selectedCharacter];
     
-    // Determine movement speed based on states
     let currentSpeed = isSprinting ? char.sprint : char.speed;
     if (isSpindashing) currentSpeed *= 1.6;
-    if (isSuperSonic) currentSpeed *= 1.5; // Super Sonic gets a massive speed boost
+    if (isSuperSonic) currentSpeed *= 1.5; 
 
-    // Handle Timers
+    // Decay attack timers
     if (spindashTimer > 0) {
         spindashTimer--;
         if (spindashTimer === 0) isSpindashing = false;
@@ -568,23 +172,20 @@ function update() {
         if (punchTimer === 0) isPunching = false;
     }
 
-    // Floating emerald rotation animation
     emeraldOrbitalAngle += 0.05;
 
-    // Movement Restrictions & Bounds
+    // Left/Right Movement Execution
     if (keys['arrowleft'] && player.x > 20) player.x -= currentSpeed;
     if (keys['arrowright'] && player.x < canvas.width - 60) player.x += currentSpeed;
 
-    // Enemy AI & Collisions
+    // Spunik AI Processing
     for (let i = enemies.length - 1; i >= 0; i--) {
         let spunik = enemies[i];
-
         if (spunik.x > player.x) spunik.x -= spunik.speed;
         else spunik.x += spunik.speed;
 
         if (checkCollision(player, spunik)) {
             if (isSpindashing || isSuperSonic) { 
-                // Super Sonic invincibility automatically kills Spuniks instantly
                 enemies.splice(i, 1);
                 score += 10;
             } else if (isPunching) {
@@ -600,31 +201,24 @@ function update() {
         }
     }
 
-    // Boss AI & Collisions
+    // Boss Battle Processing
     if (boss) {
         if (boss.x > player.x + 50) boss.x -= 2;
         else if (boss.x < player.x - 50) boss.x += 2;
 
         if (checkCollision(player, boss)) {
             if (isSpindashing || isPunching || isSuperSonic) {
-                // Deal damage to boss
                 let dmg = isSuperSonic ? char.punch * 2 : (isPunching ? char.punch : char.punch / 2);
                 bossHp -= (dmg / 10); 
                 
                 if (bossHp <= 0) {
                     boss = null;
                     score += 100;
-                    
-                    // Award Chaos Emerald upon defeating a boss
-                    if (emeraldsCollected < 7) {
-                        emeraldsCollected++;
-                    }
-                    
+                    if (emeraldsCollected < 7) emeraldsCollected++;
                     level++;
                     setupLevel();
                 }
             } else {
-                // If not attacking and not Super Sonic, take damage
                 if (!isSuperSonic) {
                     playerHp -= 0.8;
                     if (playerHp <= 0) gameState = 'GAME_OVER';
@@ -633,14 +227,11 @@ function update() {
         }
     }
 
-    // Check for level progression (Regular levels)
+    // Progression verification
     if (!boss && enemies.length === 0) {
         level++;
-        if (level > 35) {
-            gameState = 'VICTORY';
-        } else {
-            setupLevel();
-        }
+        if (level > 35) gameState = 'VICTORY';
+        else setupLevel();
     }
 }
 
@@ -654,7 +245,7 @@ function checkCollision(rect1, rect2) {
 function draw() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw Ground (Green Hill Zone Style)
+    // Render floor profile
     ctx.fillStyle = "#228B22";
     ctx.fillRect(0, 530, canvas.width, 70);
 
@@ -683,7 +274,7 @@ function draw() {
     } else if (gameState === 'PLAYING') {
         let char = characters[selectedCharacter];
 
-        // Draw HUD
+        // HUD elements
         ctx.fillStyle = "white";
         ctx.font = "20px Arial";
         ctx.textAlign = "left";
@@ -696,41 +287,34 @@ function draw() {
 
         ctx.fillStyle = "cyan";
         ctx.fillText(`MODE: ${isSprinting ? 'SPRINTING' : 'WALKING'} (SPACE)`, 20, 150);
-
-        // Emerald HUD counter
         ctx.fillStyle = "white";
         ctx.fillText(`EMERALDS: ${emeraldsCollected} / 7`, 20, 180);
 
-        // Draw Player Model (Visual tweaks if Super Sonic)
+        // Render Player Avatar (Color transformations applied)
         ctx.fillStyle = isSuperSonic ? char.superColor : char.color;
 
         if (isSpindashing) {
-            // Draw spin dash orb
             ctx.beginPath();
             ctx.arc(player.x + 20, player.y + 25, 22, 0, Math.PI * 2);
             ctx.fill();
             ctx.closePath();
         } else {
-            // Standard bounding box model
             ctx.fillRect(player.x, player.y, player.width, player.height);
-            
-            // Draw punch hitbox if active
             if (isPunching) {
                 ctx.fillStyle = "white";
                 ctx.fillRect(player.x + 40, player.y + 15, 20, 10);
             }
         }
 
-        // Draw Floating Chaos Emeralds around Player
+        // Project Floating Chaos Emerald Cluster Orbit
         for (let i = 0; i < emeraldsCollected; i++) {
             let angle = emeraldOrbitalAngle + (i * (Math.PI * 2 / 7));
-            let radius = 45; // Orbit path size
+            let radius = 45; 
             let ex = player.x + player.width / 2 + Math.cos(angle) * radius;
             let ey = player.y + player.height / 2 + Math.sin(angle) * radius;
 
             ctx.fillStyle = EMERALD_COLORS[i];
             ctx.beginPath();
-            // Draw diamond style shapes for emeralds
             ctx.moveTo(ex, ey - 8);
             ctx.lineTo(ex + 6, ey);
             ctx.lineTo(ex, ey + 8);
@@ -739,7 +323,7 @@ function draw() {
             ctx.closePath();
         }
 
-        // Super Sonic Aura Ring effect
+        // Active Super Sonic Aura Fields
         if (isSuperSonic) {
             ctx.strokeStyle = "rgba(255, 255, 0, 0.4)";
             ctx.lineWidth = 3;
@@ -748,28 +332,25 @@ function draw() {
             ctx.stroke();
         }
 
-        // Draw Spunik Entities
-        ctx.fillStyle = "#800080"; // Spunik deep purple
+        // Render enemy targets
+        ctx.fillStyle = "#800080"; 
         enemies.forEach(spunik => {
             ctx.fillRect(spunik.x, spunik.y, spunik.width, spunik.height);
         });
 
-        // Draw Boss Room Mechanics
+        // Boss layout render
         if (boss) {
             ctx.fillStyle = "red";
             ctx.font = "bold 24px Arial";
             ctx.textAlign = "center";
             ctx.fillText(`BOSS: ${BOSS_NAMES[level]}`, canvas.width / 2, 40);
 
-            // Boss Health Bar background
             ctx.fillStyle = "#440000";
             ctx.fillRect(canvas.width / 2 - 150, 60, 300, 15);
             
-            // Boss current Health filling
             ctx.fillStyle = "red";
             ctx.fillRect(canvas.width / 2 - 150, 60, 300 * (bossHp / bossMaxHp), 15);
 
-            // Boss Figure Drawing
             ctx.fillStyle = "#A52A2A";
             ctx.fillRect(boss.x, boss.y, boss.width, boss.height);
         }
@@ -797,14 +378,12 @@ function draw() {
     }
 }
 
-// Global System Loop Game ticking
 function gameLoop() {
     update();
     draw();
     requestAnimationFrame(gameLoop);
 }
 
-// Launch Game Context Loop
 gameLoop();
 </script>
 
